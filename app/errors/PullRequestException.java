@@ -1,10 +1,10 @@
 /**
  * Yobi, Project Hosting SW
  *
- * Copyright 2012 NAVER Corp.
+ * Copyright 2014 NAVER Corp.
  * http://yobi.io
  *
- * @Author Sangcheol Hwang
+ * @Author Yi EungJun
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,16 +18,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package controllers;
+package errors;
 
-import controllers.annotation.AnonymousCheck;
-import play.mvc.Controller;
-import play.mvc.Result;
-import views.html.help.*;
+public class PullRequestException extends Exception {
 
-@AnonymousCheck
-public class HelpApp extends Controller {
-    public static Result help() {
-        return ok(toc.render("title.help"));
+    private static final long serialVersionUID = 1L;
+
+    public PullRequestException(String message) {
+        super(message);
     }
+
 }

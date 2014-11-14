@@ -20,6 +20,7 @@
  */
 package controllers;
 
+import controllers.annotation.AnonymousCheck;
 import controllers.annotation.IsAllowed;
 import controllers.annotation.IsOnlyGitAvailable;
 import models.Project;
@@ -41,13 +42,14 @@ import java.util.List;
  * @author Keesun Baik
  */
 @IsOnlyGitAvailable
+@AnonymousCheck
 public class BranchApp extends Controller {
 
     @IsAllowed(Operation.READ)
     public static Result branches(String loginId, String projectName) throws IOException, GitAPIException {
         Project project = Project.findByOwnerAndProjectName(loginId, projectName);
         GitRepository gitRepository = new GitRepository(project);
-        List<GitBranch> allBranches = gitRepository.getAllBranches();
+        List<GitBranch> allBranches = gitRepository.getBranches();
         final GitBranch headBranch = gitRepository.getHeadBranch();
 
         // filter the head branch from all branch list.

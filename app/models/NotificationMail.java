@@ -39,8 +39,12 @@ import play.libs.Akka;
 import scala.concurrent.duration.Duration;
 import utils.Config;
 import utils.Markdown;
+import utils.RouteUtil;
 import utils.Url;
 
+import javax.mail.MessagingException;
+import javax.mail.Session;
+import javax.mail.internet.MimeMessage;
 import javax.persistence.Entity;
 import javax.persistence.Id;
 import javax.persistence.OneToOne;
@@ -52,6 +56,7 @@ import java.util.concurrent.TimeUnit;
 @Entity
 public class NotificationMail extends Model {
     private static final long serialVersionUID = 1L;
+    static boolean hideAddress = true;
 
     @Id
     public Long id;
@@ -63,6 +68,9 @@ public class NotificationMail extends Model {
             NotificationMail.class);
 
     public static void onStart() {
+        hideAddress = play.Configuration.root().getBoolean(
+            "application.notification.bymail.hideAddress", true);
+
         if (notificationEnabled()) {
             NotificationMail.startSchedule();
         }
@@ -135,6 +143,59 @@ public class NotificationMail extends Model {
     }
 
     /**
+     * An email which has Message-ID and/or References header based the given
+     * NotificationEvent if possible. The headers help MUA to bind the emails
+     * into a thread.
+     */
+    public static class EventEmail extends HtmlEmail {
+        private NotificationEvent event;
+
+        public EventEmail(NotificationEvent event) {
+            this.event = event;
+        }
+
+        @Override
+        protected MimeMessage createMimeMessage(Session aSession) {
+            return new MimeMessage(aSession) {
+                @Override
+                protected void updateMessageID() throws MessagingException {
+                    if (event != null && event.eventType.isCreating()) {
+                        setHeader("Message-ID",
+                                String.format("<%s@%s>",
+                                        event.getUrlToView(),
+                                        Config.getHostname()));
+                    } else {
+                        super.updateMessageID();
+                    }
+                }
+            };
+        }
+
+        public void addReferences() {
+            if (event == null || event.resourceType == null ||
+                    event.resourceId == null) {
+                return;
+            }
+
+            Resource resource = Resource.get(
+                    event.resourceType, event.resourceId);
+
+            if (resource == null) {
+                return;
+            }
+
+            Resource container = resource.getContainer();
+
+            if (container != null) {
+                String reference = RouteUtil.getUrl(
+                        container.getType(), container.getId());
+                addHeader("References",
+                        "<" + reference + "@" + Config.getHostname() + ">");
+            }
+        }
+    }
+
+    /**
      * Sends notification mails for the given event.
      *
      * @param event
@@ -175,27 +236,39 @@ public class NotificationMail extends Model {
         }
 
         for (String langCode : usersByLang.keySet()) {
-            final HtmlEmail email = new HtmlEmail();
+            final EventEmail email = new EventEmail(event);
 
             try {
-                email.setFrom(Config.getEmailFromSmtp(), event.getSender().name);
-                email.addTo(Config.getEmailFromSmtp(), utils.Config.getSiteName());
+                if (hideAddress) {
+                    email.setFrom(Config.getEmailFromSmtp(), event.getSender().name);
+                    email.addTo(Config.getEmailFromSmtp(), utils.Config.getSiteName());
+                } else {
+                    email.setFrom(event.getSender().email, event.getSender().name);
+                }
 
                 for (User receiver : usersByLang.get(langCode)) {
-                    email.addBcc(receiver.email, receiver.name);
+                    if (hideAddress) {
+                        email.addBcc(receiver.email, receiver.name);
+                    } else {
+                        email.addTo(receiver.email, receiver.name);
+                    }
+                }
+
+                if (email.getToAddresses().isEmpty()) {
+                    continue;
                 }
 
                 Lang lang = Lang.apply(langCode);
 
                 String message = event.getMessage(lang);
-                String urlToView = Url.create(event.getUrlToView());
+                String urlToView = event.getUrlToView();
                 String reference = Url.removeFragment(event.getUrlToView());
 
                 email.setSubject(event.title);
                 email.setHtmlMsg(getHtmlMessage(lang, message, urlToView, event.getResource()));
-                email.setTextMsg(getPlainMessage(lang, message, urlToView));
+                email.setTextMsg(getPlainMessage(lang, message, Url.create(urlToView)));
                 email.setCharset("utf-8");
-                email.addHeader("References", "<" + reference + "@" + Config.getHostname() + ">");
+                email.addReferences();
                 email.setSentDate(event.created);
                 Mailer.send(email);
                 String escapedTitle = email.getSubject().replace("\"", "\\\"");
@@ -222,18 +295,43 @@ public class NotificationMail extends Model {
         return views.html.common.notificationMail.render(lang, message, urlToView, resource).toString();
     }
 
-    private static void handleLinks(Document doc){
+    /**
+     * Make every link to be absolute and to have 'rel=noreferrer' if
+     * necessary.
+     */
+    public static void handleLinks(Document doc){
+        String hostname = Config.getHostname();
         String[] attrNames = {"src", "href"};
+        Boolean noreferrer =
+            play.Configuration.root().getBoolean("application.noreferrer", false);
+
         for (String attrName : attrNames) {
             Elements tags = doc.select("*[" + attrName + "]");
             for (Element tag : tags) {
-                String uri = tag.attr(attrName);
+                boolean isNoreferrerRequired = false;
+                String uriString = tag.attr(attrName);
+
+                if (noreferrer && attrName.equals("href")) {
+                    isNoreferrerRequired = true;
+                }
+
                 try {
-                    if (!new URI(uri).isAbsolute()) {
-                        tag.attr(attrName, Url.create(uri));
+                    URI uri = new URI(uriString);
+
+                    if (!uri.isAbsolute()) {
+                        tag.attr(attrName, Url.create(uriString));
+                    }
+
+                    if (uri.getHost() == null || uri.getHost().equals(hostname)) {
+                        isNoreferrerRequired = false;
                     }
                 } catch (URISyntaxException e) {
-                    play.Logger.info("A malformed URI is ignored", e);
+                    play.Logger.info("A malformed URI is detected while" +
+                            " checking an email to send", e);
+                }
+
+                if (isNoreferrerRequired) {
+                    tag.attr("rel", tag.attr("rel") + " noreferrer");
                 }
             }
         }

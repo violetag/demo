@@ -20,6 +20,7 @@
  */
 package controllers;
 
+import controllers.annotation.AnonymousCheck;
 import controllers.annotation.IsAllowed;
 import models.*;
 import models.enumeration.Operation;
@@ -30,6 +31,7 @@ import play.mvc.Result;
 import utils.ErrorViews;
 import views.html.search.*;
 
+@AnonymousCheck
 public class SearchApp extends Controller {
 
     private static final PageParam DEFAULT_PAGE = new PageParam(0, 20);
@@ -57,8 +59,7 @@ public class SearchApp extends Controller {
         }
 
         SearchResult searchResult = getSearchResult(keyword, user, searchType);
-
-        switch (searchType) {
+        switch (searchResult.getSearchType()) {
             case ISSUE:
                 searchResult.setIssues(Search.findIssues(keyword, user, pageParam));
                 break;
@@ -99,6 +100,7 @@ public class SearchApp extends Controller {
         searchResult.setIssueCommentsCount(Search.countIssueComments(keyword, user));
         searchResult.setPostCommentsCount(Search.countPostComments(keyword, user));
         searchResult.setReviewsCount(Search.countReviews(keyword, user));
+        searchResult.updateSearchType();
         return searchResult;
     }
 
@@ -129,7 +131,7 @@ public class SearchApp extends Controller {
 
         SearchResult searchResult = getSearchResult(keyword, user, organization, searchType);
 
-        switch (searchType) {
+        switch (searchResult.getSearchType()) {
             case ISSUE:
                 searchResult.setIssues(Search.findIssues(keyword, user, organization, pageParam));
                 break;
@@ -171,6 +173,7 @@ public class SearchApp extends Controller {
         searchResult.setIssueCommentsCount(Search.countIssueComments(keyword, user, organization));
         searchResult.setPostCommentsCount(Search.countPostComments(keyword, user, organization));
         searchResult.setReviewsCount(Search.countReviews(keyword, user, organization));
+        searchResult.updateSearchType();
         return searchResult;
     }
 
@@ -203,7 +206,7 @@ public class SearchApp extends Controller {
 
         SearchResult searchResult = getSearchResult(keyword, user, project, searchType);
 
-        switch (searchType) {
+        switch (searchResult.getSearchType()) {
             case ISSUE:
                 searchResult.setIssues(Search.findIssues(keyword, user, project, pageParam));
                 break;
@@ -241,6 +244,7 @@ public class SearchApp extends Controller {
         searchResult.setIssueCommentsCount(Search.countIssueComments(keyword, user, project));
         searchResult.setPostCommentsCount(Search.countPostComments(keyword, user, project));
         searchResult.setReviewsCount(Search.countReviews(keyword, user, project));
+        searchResult.updateSearchType();
         return searchResult;
     }
 

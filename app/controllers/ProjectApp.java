@@ -20,22 +20,17 @@
  */
 package controllers;
 
-import actions.AnonymousCheckAction;
 import actions.DefaultProjectCheckAction;
-
+import com.avaje.ebean.Expr;
 import com.avaje.ebean.ExpressionList;
 import com.avaje.ebean.Junction;
 import com.avaje.ebean.Page;
 
+import controllers.annotation.AnonymousCheck;
 import controllers.annotation.IsAllowed;
 import info.schleichardt.play2.mailplugin.Mailer;
 import models.*;
-import models.enumeration.Operation;
-import models.enumeration.ProjectScope;
-import models.enumeration.RequestState;
-import models.enumeration.ResourceType;
-import models.enumeration.RoleType;
-
+import models.enumeration.*;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang.exception.ExceptionUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -44,24 +39,20 @@ import org.codehaus.jackson.node.ObjectNode;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.api.errors.NoHeadException;
 import org.tmatesoft.svn.core.SVNException;
-
 import play.Logger;
 import play.data.Form;
+import play.data.validation.Constraints.PatternValidator;
 import play.data.validation.ValidationError;
 import play.db.ebean.Transactional;
 import play.i18n.Messages;
 import play.libs.Json;
-import play.mvc.Controller;
-import play.mvc.Http;
+import play.mvc.*;
 import play.mvc.Http.MultipartFormData.FilePart;
-import play.mvc.Result;
-import play.mvc.With;
 import playRepository.Commit;
 import playRepository.PlayRepository;
 import playRepository.RepositoryService;
 import scala.reflect.io.FileOperationException;
 import utils.*;
-import play.data.validation.Constraints.PatternValidator;
 import validation.ExConstraints.RestrictedValidator;
 import views.html.project.create;
 import views.html.project.delete;
@@ -71,7 +62,6 @@ import views.html.project.transfer;
 import views.html.project.change_vcs;
 
 import javax.servlet.ServletException;
-
 import java.io.IOException;
 import java.security.NoSuchAlgorithmException;
 import java.util.*;
@@ -81,6 +71,7 @@ import static play.libs.Json.toJson;
 import static utils.LogoUtil.*;
 import static utils.TemplateHelper.*;
 
+@AnonymousCheck
 public class ProjectApp extends Controller {
 
     private static final int ISSUE_MENTION_SHOW_LIMIT = 2000;
@@ -103,7 +94,7 @@ public class ProjectApp extends Controller {
 
     private static final String JSON = "application/json";
 
-    @With(AnonymousCheckAction.class)
+    @AnonymousCheck(requiresLogin = true, displaysFlashMessage = true)
     @IsAllowed(Operation.UPDATE)
     public static Result projectOverviewUpdate(String ownerId, String projectName){
         Project targetProject = Project.findByOwnerAndProjectName(ownerId, projectName);
@@ -165,7 +156,7 @@ public class ProjectApp extends Controller {
         return History.makeHistory(ownerId, project, commits, issues, postings, pullRequests);
     }
 
-    @With(AnonymousCheckAction.class)
+    @AnonymousCheck(requiresLogin = true, displaysFlashMessage = true)
     public static Result newProjectForm() {
         Form<Project> projectForm = form(Project.class).bindFromRequest("owner");
         projectForm.discardErrors();
@@ -178,7 +169,7 @@ public class ProjectApp extends Controller {
         Project project = Project.findByOwnerAndProjectName(ownerId, projectName);
         Form<Project> projectForm = form(Project.class).fill(project);
         PlayRepository repository = RepositoryService.getRepository(project);
-        return ok(setting.render("title.projectSetting", projectForm, project, repository.getBranches()));
+        return ok(setting.render("title.projectSetting", projectForm, project, repository.getBranchNames()));
     }
 
     @Transactional
@@ -255,7 +246,7 @@ public class ProjectApp extends Controller {
 
         if (validateWhenUpdate(ownerId, filledUpdatedProjectForm)) {
             return badRequest(setting.render("title.projectSetting",
-                    filledUpdatedProjectForm, project, repository.getBranches()));
+                    filledUpdatedProjectForm, project, repository.getBranchNames()));
         }
 
         Project updatedProject = filledUpdatedProjectForm.get();
@@ -577,7 +568,7 @@ public class ProjectApp extends Controller {
     }
 
     @Transactional
-    @With(AnonymousCheckAction.class)
+    @AnonymousCheck(requiresLogin = true, displaysFlashMessage = true)
     public static synchronized Result acceptTransfer(Long id, String confirmKey) throws IOException, ServletException {
         ProjectTransfer pt = ProjectTransfer.findValidOne(id);
         if (pt == null) {
@@ -990,8 +981,21 @@ public class ProjectApp extends Controller {
             junction.endJunction();
         }
 
-        if (!UserApp.currentUser().isSiteManager()) {
-            el.eq("projectScope", ProjectScope.PUBLIC);
+        User user = UserApp.currentUser();
+        if (!user.isSiteManager()) {
+            if(user.isAnonymous()) {
+                el.eq("projectScope", ProjectScope.PUBLIC);
+            } else {
+                Junction<Project> junction = el.conjunction();
+                Junction<Project> pj = junction.disjunction();
+                pj.add(Expr.eq("projectScope", ProjectScope.PUBLIC)); // public
+                List<Organization> orgs = Organization.findOrganizationsByUserLoginId(user.loginId); // protected
+                if(!orgs.isEmpty()) {
+                    pj.and(Expr.in("organization", orgs), Expr.eq("projectScope", ProjectScope.PROTECTED));
+                }
+                pj.add(Expr.eq("projectUser.user.id", user.id)); // private
+                pj.endJunction();
+            }
         }
 
         return el;
@@ -1125,7 +1129,7 @@ public class ProjectApp extends Controller {
     }
 
     @Transactional
-    @With(AnonymousCheckAction.class)
+    @AnonymousCheck(requiresLogin = true, displaysFlashMessage = true)
     @IsAllowed(Operation.DELETE)
     public static Result deletePushedBranch(String ownerId, String projectName, Long id) {
         PushedBranch pushedBranch = PushedBranch.find.byId(id);
